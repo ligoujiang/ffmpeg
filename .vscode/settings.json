@@ -1,0 +1,13 @@
+{
+    "cmake.debugConfig": {
+        "argc": [
+            "out.flv"
+        ]
+    },
+    "files.associations": {
+        "iosfwd": "cpp",
+        "fstream": "cpp",
+        "ostream": "cpp",
+        "*.tcc": "cpp"
+    }
+}

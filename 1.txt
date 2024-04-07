@@ -1,0 +1,1 @@
+g++ test1.cpp -I/usr/local/ffmpeg/include -L/usr/local/ffmpeg/lib -lavformat
