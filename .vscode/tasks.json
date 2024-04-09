@@ -12,7 +12,7 @@
                 "${fileDirname}/${fileBasenameNoExtension}",
                 "-I/usr/local/ffmpeg/include", // ffmpeg头文件路径  
                 "-L/usr/local/ffmpeg/lib", // ffmpeg库文件路径  
-                "-lavcodec", "-lavformat", "-lavutil", "-lswscale","-lavfilter" // ffmpeg库 
+                "-lavcodec", "-lavformat", "-lavutil", "-lswscale","-lavfilter"// ffmpeg库 
             ],
             "options": {
                 "cwd": "${fileDirname}"
