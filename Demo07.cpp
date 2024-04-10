@@ -4,9 +4,10 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 }
 #include <iostream>
-#include <string> 
+#include <string>
+#include <fstream> 
 
-//截取封装格式的视频（剪辑视频）
+//截取封装格式的视频
 
 class DEMuxer{
 private:
@@ -16,9 +17,8 @@ private:
     //输入和输出句柄
     AVFormatContext* m_inCtx=nullptr;
     AVFormatContext* m_outCtx=nullptr;
-    // //截取时间
-    // int m_startTime=0;
-    // int m_endTime=0;
+    //创建解码器句柄
+    AVCodecContext* m_codeCtx=nullptr;
 public:
     DEMuxer(char* argv1,char* argv2){
         m_inFileName=argv1;
@@ -37,6 +37,10 @@ public:
         }
         if(m_outCtx && !(m_outCtx->oformat->flags & AVFMT_NOFILE)){
             avio_closep(&m_outCtx->pb);
+        }
+        if(m_codeCtx){
+            avcodec_free_context(&m_codeCtx);
+            std::cout<<"m_codeCtx已被释放！"<<std::endl;
         }
     }
     //打开输入文件
@@ -173,6 +177,61 @@ public:
         delete []startPTS;
         return true;
     }
+
+    //解码提取YUV
+    bool deCodecYUV(){
+        //查找视频索引
+        int videoIndex=0;
+        if(videoIndex=av_find_best_stream(m_inCtx,AVMEDIA_TYPE_VIDEO,-1,-1,NULL,0)<0){
+            av_log(NULL,AV_LOG_ERROR,"find best stream failed!\n");
+            return false;
+        };
+        //创建解码器句柄
+        m_codeCtx=avcodec_alloc_context3(NULL);
+        if(m_codeCtx==NULL){
+            av_log(NULL,AV_LOG_ERROR,"avcodec alloc context3 failed!\n");
+            return false;
+        }
+        //拷贝解码参数
+        if(avcodec_parameters_to_context(m_codeCtx,m_inCtx->streams[videoIndex]->codecpar)<0){
+            av_log(NULL,AV_LOG_ERROR,"avcodec parameters to context failed!\n");
+            return false;
+        };
+        //查找解码器
+        const AVCodec* decoder=avcodec_find_decoder(m_codeCtx->codec_id);
+        if(decoder=NULL){
+            av_log(NULL,AV_LOG_ERROR,"avcodec find decoder failed!,codecID:%d\n",m_codeCtx->codec_id);
+            return false;
+        }
+        //打开解码器
+        if(avcodec_open2(m_codeCtx,decoder,NULL)!=0){
+            av_log(NULL,AV_LOG_ERROR,"avcodec fopen2 failed!\n");
+            return false;
+        };
+        //打开输出文件
+        std::fstream ofs;
+        ofs.open(m_outFileName,std::ios::out | std::ios::binary);
+        if(!ofs.is_open()){
+            av_log(NULL,AV_LOG_ERROR,"文件打开失败!\n");
+            return -1;
+        }
+
+        AVPacket *pkt=av_packet_alloc();
+        while(av_read_frame(m_inCtx,pkt)==0){
+            if(pkt->stream_index==videoIndex){
+                if(avcodec_send_packet(m_codeCtx,pkt)!=0){
+                    av_log(NULL,AV_LOG_ERROR,"avcodec fopen2 failed!\n");
+                    av_packet_unref(pkt);
+                    return false;
+                }
+                
+            }
+            av_packet_unref(pkt);
+        }
+
+        return true;
+    }
+
 };
     //获取时间基和时间戳
 int main(int argc,char** argv){
@@ -187,6 +246,6 @@ int main(int argc,char** argv){
     //de.getTimeBase();
     //de.getPtsDts();
     //de.cutFile((int)argv[3],(int)argv[4]);
-    std::cout<<de.cutFile(num1,num2);
+    //std::cout<<de.cutFile(num1,num2);
     return 0;
 }
