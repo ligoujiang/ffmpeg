@@ -115,7 +115,7 @@ int main(int argc,char** argv){
             AVStream *outStream=outCtx->streams[pkt->stream_index];
             pkt->stream_index=handleStreamIndexArray[pkt->stream_index];
 
-            //时间基转换
+            //输入的时间基转换成输出的时间基
             pkt->pts=av_rescale_q(pkt->pts,inStream->time_base,outStream->time_base);
             pkt->dts=av_rescale_q(pkt->dts,inStream->time_base,outStream->time_base);
             pkt->duration=av_rescale_q(pkt->duration,inStream->time_base,outStream->time_base);
