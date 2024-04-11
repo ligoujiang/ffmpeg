@@ -5,10 +5,8 @@ extern "C" {
 }
 #include <iostream>
 #include <string>
-#include <fstream> 
 
-//截取封装格式的视频
-
+int count=0;
 class DEMuxer{
 private:
     //输入和输出参数变量
@@ -19,6 +17,8 @@ private:
     AVFormatContext* m_outCtx=nullptr;
     //创建解码器句柄
     AVCodecContext* m_codeCtx=nullptr;
+    //打开输出文件
+    FILE* m_ofs=nullptr;
 public:
     DEMuxer(char* argv1,char* argv2){
         m_inFileName=argv1;
@@ -32,7 +32,7 @@ public:
         }
         if(m_outCtx){
             avformat_free_context(m_outCtx);
-            m_inCtx=nullptr;
+            m_outCtx=nullptr;
             std::cout<<"m_outCtx已被释放！"<<std::endl;
         }
         if(m_outCtx && !(m_outCtx->oformat->flags & AVFMT_NOFILE)){
@@ -40,7 +40,13 @@ public:
         }
         if(m_codeCtx){
             avcodec_free_context(&m_codeCtx);
+            m_codeCtx=nullptr;
             std::cout<<"m_codeCtx已被释放！"<<std::endl;
+        }
+        if(m_ofs){
+            fclose(m_ofs);
+            m_ofs=nullptr;
+            std::cout<<"m_ofs已被释放！"<<std::endl;
         }
     }
     //打开输入文件
@@ -178,7 +184,29 @@ public:
         return true;
     }
 
-    //解码提取YUV
+//解决YUV数据最后几帧没写进去
+    bool decodeVideo(AVCodecContext *m_codeCtx,AVPacket* pkt,FILE* ofs){         
+        if(avcodec_send_packet(m_codeCtx,pkt)!=0){//发送包给解码器
+            av_log(NULL,AV_LOG_ERROR,"avcodec send pacaket failed!\n");
+            av_packet_unref(pkt);
+            return false;
+        }
+        AVFrame *frame=av_frame_alloc();
+        //这一步是解码数据
+        while(avcodec_receive_frame(m_codeCtx,frame)==0){
+            fwrite((char*)frame->data[0],1,m_codeCtx->width*m_codeCtx->height,ofs);    //写入Y数据
+            fwrite((char*)frame->data[1],1,m_codeCtx->width*m_codeCtx->height/4,ofs);    //写入U数据
+            fwrite((char*)frame->data[2],1,m_codeCtx->width*m_codeCtx->height/4,ofs);    //写入V数据
+            count++;
+            av_log(NULL,AV_LOG_INFO,"%d\n",count);
+        }  
+        if(frame){
+            av_frame_free(&frame);
+        }
+        return true;
+    }
+
+    //解码并提取YUV
     bool deCodecYUV(){
         //查找视频索引
         int videoIndex=0;
@@ -199,7 +227,7 @@ public:
         };
         //查找解码器
         const AVCodec* decoder=avcodec_find_decoder(m_codeCtx->codec_id);
-        if(decoder=NULL){
+        if(decoder==NULL){
             av_log(NULL,AV_LOG_ERROR,"avcodec find decoder failed!,codecID:%d\n",m_codeCtx->codec_id);
             return false;
         }
@@ -208,37 +236,44 @@ public:
             av_log(NULL,AV_LOG_ERROR,"avcodec fopen2 failed!\n");
             return false;
         };
-        //打开输出文件
-        std::fstream ofs;
-        ofs.open(m_outFileName,std::ios::out | std::ios::binary);
-        if(!ofs.is_open()){
-            av_log(NULL,AV_LOG_ERROR,"文件打开失败!\n");
-            return -1;
-        }
-
+        m_ofs=fopen(m_outFileName,"wb+");
+        if(m_ofs==NULL){
+            av_log(NULL,AV_LOG_ERROR,"open FILE ofs failed!\n");
+            return false;
+        }        
         AVPacket *pkt=av_packet_alloc();
+        //AVFrame *frame=av_frame_alloc();
         while(av_read_frame(m_inCtx,pkt)==0){
             if(pkt->stream_index==videoIndex){
-                if(avcodec_send_packet(m_codeCtx,pkt)!=0){
-                    av_log(NULL,AV_LOG_ERROR,"avcodec fopen2 failed!\n");
-                    av_packet_unref(pkt);
+                // if(avcodec_send_packet(m_codeCtx,pkt)!=0){//发送包给解码器
+                //     av_log(NULL,AV_LOG_ERROR,"avcodec send pacaket failed!\n");
+                //     av_packet_unref(pkt);
+                //     return false;
+                // }
+                // //这一步是解码数据
+                // while(avcodec_receive_frame(m_codeCtx,frame)==0){
+                //     ofs.write((char*)frame->data[0],m_codeCtx->width*m_codeCtx->height);    //写入Y数据
+                //     ofs.write((char*)frame->data[1],m_codeCtx->width*m_codeCtx->height/4);    //写入U数据
+                //     ofs.write((char*)frame->data[2],m_codeCtx->width*m_codeCtx->height/4);    //写入V数据
+                // }
+                if(decodeVideo(m_codeCtx,pkt,m_ofs)==0){
                     return false;
-                }
-                
+                };               
             }
             av_packet_unref(pkt);
         }
-
+        //flush decoder
+        decodeVideo(m_codeCtx,NULL,m_ofs);
         return true;
     }
 
 };
-    //获取时间基和时间戳
+    //解码视频提取YUV  
 int main(int argc,char** argv){
 
-    int num1 = std::stod(argv[3]);
-    int num2 = std::stod(argv[4]);
-    printf("%d %d\n",num1,num2);
+    // int num1 = std::stod(argv[3]);
+    // int num2 = std::stod(argv[4]);
+    //printf("%d %d\n",num1,num2);
     DEMuxer de(argv[1],argv[2]);
     std::cout<<de.openInput()<<std::endl;
     std::cout<<de.getFileMesage()<<std::endl;
@@ -247,5 +282,6 @@ int main(int argc,char** argv){
     //de.getPtsDts();
     //de.cutFile((int)argv[3],(int)argv[4]);
     //std::cout<<de.cutFile(num1,num2);
+    std::cout<<de.deCodecYUV()<<std::endl;
     return 0;
 }
