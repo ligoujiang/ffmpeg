@@ -42,6 +42,7 @@ typedef struct tagBITMAPINFOHEADER
 } BITMAPINFOHEADER;
 
 int frameCount=0;
+int writePacketCount=0;
 
 /*
 sws_scale()函数
@@ -63,18 +64,22 @@ private:
     //创建解码器句柄
     AVCodecContext* m_codeCtx=nullptr;
     //打开输出文件
-    FILE* m_ofs=nullptr;
+    FILE* m_dest_fp=nullptr;
     //更改分辨率
     char* m_destVideoSizeString=nullptr; //接收传入的参数，格式为1920x1080
     int m_destWidth=0;
     int m_destHeight=0;
     //修改视频分辨率句柄
     SwsContext *m_swsCtx=nullptr;
+    //视频编码
+    const char* m_encoderName=nullptr;//编码器名
+    AVCodecContext* m_encodeCtx=nullptr;    //编码器的句柄
 public:
-    DEMuxer(char* argv1,char* argv2,char* argv3){
+    DEMuxer(char* argv1,char* argv2,char* argv3,char* argv4){
         m_inFileName=argv1;
         m_outFileName=argv2;
-        m_destVideoSizeString=argv3;
+        m_encoderName=argv3;
+        m_destVideoSizeString=argv4;
     }
     ~DEMuxer(){
         if(m_inCtx){
@@ -95,10 +100,15 @@ public:
             m_codeCtx=nullptr;
             std::cout<<"m_codeCtx已被释放！"<<std::endl;
         }
-        if(m_ofs){
-            fclose(m_ofs);
-            m_ofs=nullptr;
-            std::cout<<"m_ofs已被释放！"<<std::endl;
+        // if(m_dest_fp){
+        //     fclose(m_dest_fp);
+        //     m_dest_fp=nullptr;
+        //     std::cout<<"m_dest_fp已被释放！"<<std::endl;
+        // }
+        if(m_encodeCtx){
+            avcodec_free_context(&m_encodeCtx);
+            m_encodeCtx=nullptr;
+            std::cout<<"m_encodeCtx已被释放！"<<std::endl;
         }
     }
     //打开输入文件
@@ -287,8 +297,8 @@ public:
             av_log(NULL,AV_LOG_ERROR,"avcodec fopen2 failed!\n");
             return false;
         };
-        m_ofs=fopen(m_outFileName,"wb+");
-        if(m_ofs==NULL){
+        m_dest_fp=fopen(m_outFileName,"wb+");
+        if(m_dest_fp==NULL){
             av_log(NULL,AV_LOG_ERROR,"open FILE ofs failed!\n");
             return false;
         }        
@@ -296,14 +306,14 @@ public:
         //AVFrame *frame=av_frame_alloc();
         while(av_read_frame(m_inCtx,pkt)==0){
             if(pkt->stream_index==videoIndex){
-                if(decodeVideo(m_codeCtx,pkt,m_ofs)==0){
+                if(decodeVideo(m_codeCtx,pkt,m_dest_fp)==0){
                     return false;
                 };               
             }
             av_packet_unref(pkt);
         }
         //flush decoder
-        decodeVideo(m_codeCtx,NULL,m_ofs);
+        decodeVideo(m_codeCtx,NULL,m_dest_fp);
         return true;
     }
     
@@ -361,8 +371,8 @@ public:
         av_image_fill_arrays(destFrame->data,destFrame->linesize,outBuffer,destPixFmt,m_destWidth,m_destHeight,1);
 
         //打开输出的文件
-        m_ofs=fopen(m_outFileName,"wb+");
-        if(m_ofs==NULL){
+        m_dest_fp=fopen(m_outFileName,"wb+");
+        if(m_dest_fp==NULL){
             av_log(NULL,AV_LOG_ERROR,"open FILE ofs failed!\n");
             return false;
         }        
@@ -398,9 +408,9 @@ public:
         while(avcodec_receive_frame(m_codeCtx,frame)==0){
             //接收到数据再修改分辨率
             sws_scale(m_swsCtx,frame->data,frame->linesize,0,m_codeCtx->height,destframe->data,destframe->linesize);
-            fwrite(destframe->data[0],1,m_destWidth*m_destHeight,m_ofs);    //写入Y数据
-            fwrite(destframe->data[1],1,m_destWidth*m_destHeight/4,m_ofs);    //写入U数据
-            fwrite(destframe->data[2],1,m_destWidth*m_destHeight/4,m_ofs);    //写入V数据
+            fwrite(destframe->data[0],1,m_destWidth*m_destHeight,m_dest_fp);    //写入Y数据
+            fwrite(destframe->data[1],1,m_destWidth*m_destHeight/4,m_dest_fp);    //写入U数据
+            fwrite(destframe->data[2],1,m_destWidth*m_destHeight/4,m_dest_fp);    //写入V数据
             av_log(NULL,AV_LOG_INFO,"linesize[0]=%d,linesize[1]=%d,linesize[2]=%d,width=%d,height=%d\n",destframe->linesize[0],destframe->linesize[1],destframe->linesize[2],
             m_destWidth,m_destHeight);
         }  
@@ -464,8 +474,8 @@ public:
         av_image_fill_arrays(destFrame->data,destFrame->linesize,outBuffer,destPixFmt,m_destWidth,m_destHeight,1);
 
         //打开输出的文件
-        m_ofs=fopen(m_outFileName,"wb+");
-        if(m_ofs==NULL){
+        m_dest_fp=fopen(m_outFileName,"wb+");
+        if(m_dest_fp==NULL){
             av_log(NULL,AV_LOG_ERROR,"open FILE ofs failed!\n");
             return false;
         }        
@@ -506,7 +516,7 @@ public:
             // fwrite(destframe->data[1],1,m_destWidth*m_destHeight/4,m_ofs);    //写入U数据
             // fwrite(destframe->data[2],1,m_destWidth*m_destHeight/4,m_ofs);    //写入V数据
             //以RGB24格式写入数据
-            fwrite(destframe->data[0],1,m_destWidth*m_destHeight*3,m_ofs);  //RGB24是3字节
+            fwrite(destframe->data[0],1,m_destWidth*m_destHeight*3,m_dest_fp);  //RGB24是3字节
             av_log(NULL,AV_LOG_INFO,"linesize[0]=%d,linesize[1]=%d,linesize[2]=%d,width=%d,height=%d\n",destframe->linesize[0],destframe->linesize[1],destframe->linesize[2],
             m_destWidth,m_destHeight);
         }  
@@ -570,8 +580,8 @@ public:
         av_image_fill_arrays(destFrame->data,destFrame->linesize,outBuffer,destPixFmt,m_destWidth,m_destHeight,1);
 
         //打开输出的文件
-        m_ofs=fopen(m_outFileName,"wb+");
-        if(m_ofs==NULL){
+        m_dest_fp=fopen(m_outFileName,"wb+");
+        if(m_dest_fp==NULL){
             av_log(NULL,AV_LOG_ERROR,"open FILE ofs failed!\n");
             return false;
         }        
@@ -612,7 +622,7 @@ public:
             // fwrite(destframe->data[1],1,m_destWidth*m_destHeight/4,m_ofs);    //写入U数据
             // fwrite(destframe->data[2],1,m_destWidth*m_destHeight/4,m_ofs);    //写入V数据
             //以RGB24格式写入数据
-            fwrite(destframe->data[0],1,m_destWidth*m_destHeight*3,m_ofs);  //RGB24是3字节
+            fwrite(destframe->data[0],1,m_destWidth*m_destHeight*3,m_dest_fp);  //RGB24是3字节
             frameCount++;
             //保存BMF格式图片
             char bmpFileName[64]={0};
@@ -655,6 +665,124 @@ public:
         fclose(fp);
         return true;
     }
+    
+    
+    //YUV视频编码
+    bool deCodeVideo(){
+        //获取输入的分辨率
+        if(av_parse_video_size(&m_destWidth,&m_destHeight,m_destVideoSizeString)<0){    //从m_destVideoSizeString，提取分辨率格式，并赋值给m_destWidth和m_destHeight
+            av_log(NULL,AV_LOG_ERROR,"av_parse video size failed!\n");
+            return false;
+        };
+        //指定编码器
+        const AVCodec* encoder=avcodec_find_encoder_by_name(m_encoderName);
+        if(encoder==NULL){
+        av_log(NULL,AV_LOG_ERROR,"avcodec_find_encoder_by_name failed!\n");
+        return false;
+        }
+        //创建编码器句柄
+        m_encodeCtx=avcodec_alloc_context3(encoder);
+        if(m_encodeCtx==NULL){
+            av_log(NULL,AV_LOG_ERROR,"avcodec_alloc_context3 failed!\n");
+            return false;
+        }
+        //获取源视频色彩格式（根据原视频格式指定）
+        enum AVPixelFormat pixFmt=AV_PIX_FMT_YUV420P;
+        //指定帧率
+        int fps=30;
+        //给编码器句柄设置参数
+        m_encodeCtx->codec_type=AVMEDIA_TYPE_VIDEO;
+        m_encodeCtx->pix_fmt=pixFmt;
+        m_encodeCtx->width=m_destWidth;
+        m_encodeCtx->height=m_destHeight;
+        m_encodeCtx->time_base=(AVRational){1,fps};     //强制类型转换
+        m_encodeCtx->bit_rate=8488000;
+        m_encodeCtx->max_b_frames=0;
+        m_encodeCtx->gop_size=10;
+        //打开编码器
+        if(avcodec_open2(m_encodeCtx,encoder,NULL)!=0){
+            av_log(NULL,AV_LOG_ERROR,"avcodec_open2 failed!\n");
+            return false;
+        };
+        //打开输入文件
+        FILE* src_fp=fopen(m_inFileName,"rb");
+        if(src_fp==NULL){
+            av_log(NULL,AV_LOG_ERROR,"str_fp fopen failed!\n");
+            return false;
+        }
+        //打开输出文件
+        FILE* dest_fp=fopen(m_outFileName,"wb+");
+        if(dest_fp==NULL){
+            av_log(NULL,AV_LOG_ERROR,"m_dest_fp fopen failed!\n");
+            return false;
+        }
+
+        AVFrame* frame=av_frame_alloc();
+        int frameSize=av_image_get_buffer_size(pixFmt,m_destWidth,m_destHeight,1);
+        uint8_t* frameBuffer=(static_cast<uint8_t*>(av_malloc(frameSize)));
+        av_image_fill_arrays(frame->data,frame->linesize,frameBuffer,pixFmt,m_destWidth,m_destHeight,1);
+        frame->format=pixFmt;
+        frame->width=m_destWidth;
+        frame->height=m_destHeight;
+
+
+        int pictureSize=m_destWidth*m_destHeight;
+        AVPacket *pkt=av_packet_alloc();
+
+        //读取输入文件的数据
+        int readFrameCount=0;
+        while(fread(frameBuffer,1,pictureSize*3/2,src_fp)==pictureSize*3/2){ //pictureSize*3/2 yuv420p的数据=width*height*1.5字节
+            //Y 1 U1/4 V 1/4
+            frame->data[0]=frameBuffer;
+            frame->data[1]=frameBuffer+pictureSize;
+            frame->data[2]=frameBuffer+pictureSize+pictureSize/4;
+            frame->pts=readFrameCount;
+            readFrameCount++;
+            printf("readFrameCount=%d\n",readFrameCount);
+            encodec(frame,pkt,dest_fp);
+        }
+        encodec(NULL,pkt,dest_fp);
+
+        if(src_fp){
+            fclose(src_fp);
+        }
+        if(frameBuffer){
+            av_freep(&frameBuffer);
+        }
+        return true;
+    }
+    //用于编码，flash encodec
+    bool encodec(AVFrame* frame,AVPacket* pkt,FILE* dest_fp){
+        int ret=avcodec_send_frame(m_encodeCtx,frame);
+        if(ret<0){
+            av_log(NULL,AV_LOG_ERROR,"vcodec_send_frame failed!\n");
+            return false;
+        }
+        while(avcodec_receive_packet(m_encodeCtx,pkt)==0){
+            fwrite(pkt->data,1,pkt->size,dest_fp);
+            writePacketCount++;
+            printf("writePacketCount=%d\n",writePacketCount);
+        }
+        av_packet_unref(pkt);
+
+
+        // while(ret>=0){
+        //     ret=avcodec_receive_packet(m_encodeCtx,pkt);
+        //     if(ret==AVERROR(EAGAIN)||AVERROR_EOF){
+        //         av_log(NULL,AV_LOG_ERROR,"eof\n");
+        //         return true;
+        //     }
+        //     if(ret<0){
+        //         av_log(NULL,AV_LOG_ERROR,"encodec frame failed!\n");
+        //         return false;
+        //     }
+        //     fwrite(pkt->data,1,pkt->size,dest_fp);
+        //     writePacketCount++;
+        //     printf("writePacketCount=%d\n",writePacketCount);
+        //     av_packet_unref(pkt);
+        // }
+        return true;
+    }
 };
 
 
@@ -665,15 +793,16 @@ int main(int argc,char** argv){
     // int num1 = std::stod(argv[3]);
     // int num2 = std::stod(argv[4]);
     //printf("%d %d\n",num1,num2);
-    DEMuxer de(argv[1],argv[2],argv[3]);
-    std::cout<<de.openInput()<<std::endl;
-    std::cout<<de.getFileMesage()<<std::endl;
+    DEMuxer de(argv[1],argv[2],argv[3],argv[4]);
+    // std::cout<<de.openInput()<<std::endl;
+    // std::cout<<de.getFileMesage()<<std::endl;
     //de.getDuration();
     //de.getTimeBase();
     //de.getPtsDts();
     //de.cutFile((int)argv[3],(int)argv[4]);
     //std::cout<<de.cutFile(num1,num2);
     //std::cout<<de.deCodecYUV()<<std::endl;
-    de.destVideoSize_RGB24_BMF();
+    //de.destVideoSize_RGB24_BMF();
+    de.deCodeVideo();
     return 0;
 }
