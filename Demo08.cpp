@@ -2,11 +2,24 @@ extern "C" {
 #include <libavformat/avformat.h>  
 #include <libavutil/avutil.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/parseutils.h>
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
 }
 #include <iostream>
 #include <string>
 
-int count=0;
+
+/*
+sws_scale()函数
+有可能不一致导致视频不能播放，可使width与linesize宽度一致
+1.图像色彩空间转换（yuv各格式之间的转换或者转换成RGB）
+2.分辨率缩放
+3.前后图像滤镜波处理
+*/
+
+
+//int count=0;
 class DEMuxer{
 private:
     //输入和输出参数变量
@@ -19,10 +32,17 @@ private:
     AVCodecContext* m_codeCtx=nullptr;
     //打开输出文件
     FILE* m_ofs=nullptr;
+    //更改分辨率
+    char* m_destVideoSizeString=nullptr; //接收传入的参数，格式为1920x1080
+    int m_destWidth=0;
+    int m_destHeight=0;
+    //修改视频分辨率句柄
+    SwsContext *m_swsCtx=nullptr;
 public:
-    DEMuxer(char* argv1,char* argv2){
+    DEMuxer(char* argv1,char* argv2,char* argv3){
         m_inFileName=argv1;
         m_outFileName=argv2;
+        m_destVideoSizeString=argv3;
     }
     ~DEMuxer(){
         if(m_inCtx){
@@ -183,7 +203,8 @@ public:
         delete []startPTS;
         return true;
     }
-//解决YUV数据最后几帧没写进去
+
+    //解决YUV数据最后几帧没写进去
     bool decodeVideo(AVCodecContext *m_codeCtx,AVPacket* pkt,FILE* ofs){         
         if(avcodec_send_packet(m_codeCtx,pkt)!=0){//发送包给解码器
             av_log(NULL,AV_LOG_ERROR,"avcodec send pacaket failed!\n");
@@ -196,8 +217,8 @@ public:
             fwrite((char*)frame->data[0],1,m_codeCtx->width*m_codeCtx->height,ofs);    //写入Y数据
             fwrite((char*)frame->data[1],1,m_codeCtx->width*m_codeCtx->height/4,ofs);    //写入U数据
             fwrite((char*)frame->data[2],1,m_codeCtx->width*m_codeCtx->height/4,ofs);    //写入V数据
-            count++;
-            av_log(NULL,AV_LOG_INFO,"%d\n",count);
+            av_log(NULL,AV_LOG_INFO,"linesize[0]=%d,linesize[1]=%d,linesize[2]=%d,width=%d,height=%d\n",frame->linesize[0],frame->linesize[1],frame->linesize[2],
+            m_codeCtx->width,m_codeCtx->height);
         }  
         if(frame){
             av_frame_free(&frame);
@@ -243,18 +264,6 @@ public:
         //AVFrame *frame=av_frame_alloc();
         while(av_read_frame(m_inCtx,pkt)==0){
             if(pkt->stream_index==videoIndex){
-                // if(avcodec_send_packet(m_codeCtx,pkt)!=0){//发送包给解码器
-                //     av_log(NULL,AV_LOG_ERROR,"avcodec send pacaket failed!\n");
-                //     av_packet_unref(pkt);
-                //     return false;
-                // }
-                // //这一步是解码数据
-                // while(avcodec_receive_frame(m_codeCtx,frame)==0){
-                //     ofs.write((char*)frame->data[0],m_codeCtx->width*m_codeCtx->height);    //写入Y数据
-                //     ofs.write((char*)frame->data[1],m_codeCtx->width*m_codeCtx->height/4);    //写入U数据
-                //     ofs.write((char*)frame->data[2],m_codeCtx->width*m_codeCtx->height/4);    //写入V数据
-                // }
-                //解码并写入
                 if(decodeVideo(m_codeCtx,pkt,m_ofs)==0){
                     return false;
                 };               
@@ -265,17 +274,123 @@ public:
         decodeVideo(m_codeCtx,NULL,m_ofs);
         return true;
     }
-    
+    //解码YUV数据,并且修改分辨率
+    bool destVideoSize(){
+        //获取视频分辨率
+        if(av_parse_video_size(&m_destWidth,&m_destHeight,m_destVideoSizeString)<0){
+            av_log(NULL,AV_LOG_ERROR,"av parse video size failed!\n");
+            return false;
+        };
+        av_log(NULL,AV_LOG_INFO,"destwidth=%d,destheight=%d\n",m_destWidth,m_destHeight);
+
+        //查找视频索引
+        int videoIndex=0;
+        if(videoIndex=av_find_best_stream(m_inCtx,AVMEDIA_TYPE_VIDEO,-1,-1,NULL,0)<0){
+            av_log(NULL,AV_LOG_ERROR,"find best stream failed!\n");
+            return false;
+        };
+        //创建解码器句柄
+        m_codeCtx=avcodec_alloc_context3(NULL);
+        if(m_codeCtx==NULL){
+            av_log(NULL,AV_LOG_ERROR,"avcodec alloc context3 failed!\n");
+            return false;
+        }
+        //拷贝解码参数
+        if(avcodec_parameters_to_context(m_codeCtx,m_inCtx->streams[videoIndex]->codecpar)<0){
+            av_log(NULL,AV_LOG_ERROR,"avcodec parameters to context failed!\n");
+            return false;
+        };
+        //查找解码器
+        const AVCodec* decoder=avcodec_find_decoder(m_codeCtx->codec_id);
+        if(decoder==NULL){
+            av_log(NULL,AV_LOG_ERROR,"avcodec find decoder failed!,codecID:%d\n",m_codeCtx->codec_id);
+            return false;
+        }
+        //打开解码器
+        if(avcodec_open2(m_codeCtx,decoder,NULL)!=0){
+            av_log(NULL,AV_LOG_ERROR,"avcodec fopen2 failed!\n");
+            return false;
+        };
+
+
+        //设置输入和输出的参数
+        enum AVPixelFormat destPixFmt=m_codeCtx->pix_fmt;//设置要转换的编码格式
+        m_swsCtx=sws_getContext(m_codeCtx->width,m_codeCtx->height,m_codeCtx->pix_fmt,m_destWidth,m_destHeight,destPixFmt,SWS_FAST_BILINEAR,NULL,NULL,NULL);
+        if(m_swsCtx==NULL){
+            av_log(NULL,AV_LOG_ERROR,"sws getContext failed!\n");
+            return false;
+        }
+        AVFrame* destFrame=av_frame_alloc();
+        //开辟空间
+        uint8_t* outBuffer=(static_cast<uint8_t*>(av_malloc((av_image_get_buffer_size(destPixFmt,m_destWidth,m_destHeight,1)))));  //获取大小
+        //从获取的大小outBuffer，分配空间给destFrame->data
+        av_image_fill_arrays(destFrame->data,destFrame->linesize,outBuffer,destPixFmt,m_destWidth,m_destHeight,1);
+
+        //打开输出的文件
+        m_ofs=fopen(m_outFileName,"wb+");
+        if(m_ofs==NULL){
+            av_log(NULL,AV_LOG_ERROR,"open FILE ofs failed!\n");
+            return false;
+        }        
+        AVPacket *pkt=av_packet_alloc();
+        //AVFrame *frame=av_frame_alloc();
+        while(av_read_frame(m_inCtx,pkt)==0){
+            if(pkt->stream_index==videoIndex){
+                if(decodeVideo(m_codeCtx,pkt,destFrame)==0){
+                    return false;
+                };               
+            }
+            av_packet_unref(pkt);
+        }
+        //flush decoder
+        decodeVideo(m_codeCtx,NULL,destFrame);
+        if(destFrame){
+            av_frame_free(&destFrame);
+        }
+        if(outBuffer){
+            av_freep(&outBuffer);
+        }
+        return true;
+    }
+    //解决YUV数据最后几帧没写进去，并且修改分辨率版
+    bool decodeVideo(AVCodecContext *m_codeCtx,AVPacket* pkt,AVFrame* destframe){         
+        if(avcodec_send_packet(m_codeCtx,pkt)!=0){//发送包给解码器
+            av_log(NULL,AV_LOG_ERROR,"avcodec send pacaket failed!\n");
+            av_packet_unref(pkt);
+            return false;
+        }
+        AVFrame *frame=av_frame_alloc();
+        //这一步是解码数据
+        while(avcodec_receive_frame(m_codeCtx,frame)==0){
+            //接收到数据再修改分辨率
+            sws_scale(m_swsCtx,frame->data,frame->linesize,0,m_codeCtx->height,destframe->data,destframe->linesize);
+            fwrite(destframe->data[0],1,m_destWidth*m_destHeight,m_ofs);    //写入Y数据
+            fwrite(destframe->data[1],1,m_destWidth*m_destHeight/4,m_ofs);    //写入U数据
+            fwrite(destframe->data[2],1,m_destWidth*m_destHeight/4,m_ofs);    //写入V数据
+            av_log(NULL,AV_LOG_INFO,"linesize[0]=%d,linesize[1]=%d,linesize[2]=%d,width=%d,height=%d\n",destframe->linesize[0],destframe->linesize[1],destframe->linesize[2],
+            m_destWidth,m_destHeight);
+        }  
+        if(frame){
+            av_frame_free(&frame);
+        }
+        return true;
+    }
 };
-    //解码并提取YUV
+    //解码视频提取YUV  
 int main(int argc,char** argv){
 
     // int num1 = std::stod(argv[3]);
     // int num2 = std::stod(argv[4]);
     //printf("%d %d\n",num1,num2);
-    DEMuxer de(argv[1],argv[2]);
+    DEMuxer de(argv[1],argv[2],argv[3]);
     std::cout<<de.openInput()<<std::endl;
     std::cout<<de.getFileMesage()<<std::endl;
-
+    //de.getDuration();
+    //de.getTimeBase();
+    //de.getPtsDts();
+    //de.cutFile((int)argv[3],(int)argv[4]);
+    //std::cout<<de.cutFile(num1,num2);
+    //std::cout<<de.deCodecYUV()<<std::endl;
+    de.destVideoSize();
     return 0;
 }
