@@ -10,6 +10,8 @@ extern "C" {
 #include <iostream>
 #include <string>
 
+//编译
+//g++ Demo12.cpp -I/usr/local/ffmpeg/include -L/usr/local/ffmpeg/lib -lavformat -lavutil -lavcodec -lswscale -lavdevice -o demo12.out
 
 
 //BMF结构体

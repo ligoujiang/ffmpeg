@@ -838,6 +838,22 @@ public:
         }
 
         //获取音频通道数
+
+
+        // AVFrame* frame=nullptr;
+        // AVCodecContext* coderCtx=nullptr;
+        // //已被废弃
+        // frame->channel_layout;
+        // frame->channels;
+        // coderCtx->channel_layout;
+        // coderCtx->channels;
+        // //新版本用法
+        // frame->ch_layout;
+        // frame->ch_layout.nb_channels;
+        // coderCtx->ch_layout;
+        // coderCtx->ch_layout.nb_channels;
+
+
         //int channels=m_codeCtx->ch_layout.nb_channels;         
 
         m_frame=av_frame_alloc();
